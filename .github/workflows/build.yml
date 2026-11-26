@@ -1,0 +1,39 @@
+name: build
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pyinstaller pywin32
+      - run: pyinstaller --onefile --noconsole --name CenterPrintHelper --hidden-import win32print --hidden-import win32ui --hidden-import win32con --hidden-import win32gui center_print_helper.py
+      - name: Smoke test the built exe
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\CenterPrintHelper.exe -PassThru
+          Start-Sleep -Seconds 6
+          $r = Invoke-RestMethod http://127.0.0.1:17653/status
+          $r | ConvertTo-Json
+          if (-not $r.pywin32_available) { throw "pywin32 missing in the bundle" }
+          $cfg = Get-Content "$env:APPDATA\CenterPrintHelper\config.json" | ConvertFrom-Json
+          $r2 = Invoke-RestMethod -Headers @{ 'X-Helper-Token' = $cfg.token } http://127.0.0.1:17653/status
+          $r2 | ConvertTo-Json
+          if (-not $r2.authorized) { throw "token auth failed" }
+          Stop-Process $p -Force
+      - run: choco install innosetup -y --no-progress
+      - run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss'
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Center Print Helper v1.0.${{ github.run_number }}
+          files: |
+            Output/CenterPrintHelper-Setup.exe
+            dist/CenterPrintHelper.exe
